@@ -13,15 +13,16 @@ import subprocess
 import concurrent.futures
 import math
 import random
+import requests
+import urllib3
 
 
 NAME = "MoMo"
 CREATOR = "A439"
-VERSION = "0.3.0"
-VERSION_DESC = "增加了完善（？）的命令系统"
+VERSION = "0.3.1"
 
 
-# 记忆衰减常数 - 每天重要性衰减50%
+# 记忆衰减常数
 DECAY_CONSTANT = math.log(2) / (60 * 60 * 24 * 7)
 
 
@@ -108,23 +109,20 @@ def cmd_async(command, directory, timeout=10, callback=None):
     return future
 
 
-# 同步版本的包装器（保持原有接口）
 def cmd(command, directory, timeout=10):
     """执行命令（内部使用异步实现）"""
     future = cmd_async(command, directory, timeout)
     try:
-        return future.result(timeout=timeout + 5)  # 额外给5秒缓冲
+        return future.result(timeout=timeout + 5)
     except TimeoutError:
         return f"命令执行超时（{timeout}秒），但程序可能在后台继续运行"
 
 
 def get_disk_info():
-    if os.name == "nt":  # Windows系统
-        # 获取所有可能的驱动器字母
+    if os.name == "nt":
         drives = [f"{d}:\\" for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.exists(f"{d}:\\")]
         return drives
-    else:  # Linux/Mac系统
-        # 获取挂载点
+    else:
         mounts = []
         with open("/proc/mounts", "r") as f:
             for line in f:
@@ -160,37 +158,26 @@ def save_json_file(file_path, data):
 
 
 def calculate_current_importance(memory_item):
-    """计算记忆项的当前重要性（考虑时间衰减）"""
+    """计算记忆项的当前重要性"""
     if "importance" not in memory_item:
-        memory_item["importance"] = 1.0  # 默认重要性
-
-    # 计算经过的时间（秒）
+        memory_item["importance"] = 1.0
     memory_time = datetime.datetime.fromisoformat(memory_item["time"])
     elapsed_seconds = (datetime.datetime.now() - memory_time).total_seconds()
-
-    # 应用指数衰减
     current_importance = memory_item["importance"] * math.exp(-DECAY_CONSTANT * elapsed_seconds)
-    return max(0.01, current_importance)  # 确保重要性不低于0.01
+    return max(0.01, current_importance)
 
 
 def add_to_memory(memory_list, message, importance_boost=0):
     """添加新记忆到记忆列表，可选增加重要性"""
-    # 首先衰减所有现有记忆的重要性
     for item in memory_list:
         item["current_importance"] = calculate_current_importance(item)
-
-    # 添加新记忆
     new_memory = {
         "time": datetime.datetime.now().isoformat(),
         "message": message,
-        "importance": 1.0 +
-        # 基础重要性1.0 + 额外提升  # 当前重要性
-        importance_boost,
+        "importance": 1.0 + importance_boost,
         "current_importance": 1.0 + importance_boost,
     }
     memory_list.append(new_memory)
-
-    # 按当前重要性排序，保留最重要的1000条记忆
     memory_list.sort(key=lambda x: x.get("current_importance", 0), reverse=True)
     if len(memory_list) > 1000:
         memory_list = memory_list[:1000]
@@ -209,11 +196,8 @@ def boost_memory_importance(memory_list, indices, boost_amount=0.5):
 
 def get_top_memories(memory_list, count=32):
     """获取最重要的记忆"""
-    # 首先更新所有记忆的当前重要性
     for item in memory_list:
         item["current_importance"] = calculate_current_importance(item)
-
-    # 按重要性排序并返回前count条
     sorted_memories = sorted(memory_list, key=lambda x: x.get("current_importance", 0), reverse=True)
     return sorted_memories[:count]
 
@@ -223,7 +207,7 @@ def command_about(*args):
     print(
         f"""
 {NAME}
-版本：{VERSION} - {VERSION_DESC}
+版本：{VERSION}
 作者：{CREATOR}
 
 是猫娘沫沫喵~
@@ -302,7 +286,6 @@ time.sleep(0.439)
 st = time.time()
 while time.time() - st < 1:
     clear_console()
-    # os.system("cls")
     screen.add_rect(0, 0, screen.get_size()[0], round((1 - (time.time() - st) ** 5) * screen.get_size()[1]), (255, 128, 255), True)
     screen.add_text(1, 1, welcome_text, (128, 255, 255), screen.get_size()[0] - 2, round((1 - (time.time() - st) ** 5) * screen.get_size()[1]) - 2)
     screen.add_text(1, 1, welcome_shadow, (255, 128, 255), screen.get_size()[0] - 2, round((1 - (time.time() - st) ** 5) * screen.get_size()[1]) - 2)
@@ -311,7 +294,6 @@ os.system("cls")
 screen.add_rect(0, 0, screen.get_size()[0], 3, (255, 128, 255), True)
 screen.add_text(1, 1, f"{NAME}", (255, 255, 255), screen.get_size()[0] - 2, 2)
 screen.add_text(1, 1, f"{len(NAME) * " "} v{VERSION}", (128, 128, 128), screen.get_size()[0] - 2, 2)
-screen.add_text(0, 3, "使用/help查看可用命令", (128, 128, 128))
 screen.render(True)
 print()
 
@@ -325,15 +307,11 @@ env = f"""
 app_data_dir = f"{os.environ.get("APPDATA")}\\{CREATOR}\\{NAME}"
 mem_path = os.path.join(app_data_dir, "memory.json")
 settings_path = os.path.join(app_data_dir, "settings.json")
-
-# 加载记忆和设置
 memory = load_json_file(mem_path, [])
 settings = load_json_file(settings_path, {})
-
-# 更新旧格式的记忆（添加重要性字段）
-for mem in memory:
+for mem in memory:  # 向下兼容
     if "importance" not in mem:
-        mem["importance"] = 1.0  # 默认重要性
+        mem["importance"] = 1.0
 
 ai = CFVI.deepseek.DeepSeek(settings.get("base_url", "https://api.siliconflow.cn/v1/"), settings.get("api_key", "sk-enbhvbmgdndpkvznavkwqbdnafwmvsugjczzuwmeradypbdu"), settings.get("model", "Qwen/Qwen3-8B"))
 character = open(resource_path("resources/MoMo.txt"), "r", encoding="utf8").read()
@@ -376,6 +354,25 @@ model - 模型""",
 command_manager.add_command("creatorsaid", lambda *args: print(random.choice(creator_said)))
 
 
+# 获取更新
+try:
+    print(CFVI.cli.colorize_text("正在获取更新...", (128, 128, 128)), end="", flush=True)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    response = requests.get(
+        f"https://api.github.com/repos/A439-Official/{NAME}/releases/latest",
+        verify=False,
+        timeout=10,
+    ).json()
+    print("\r", end="")
+    if type(response) == dict:
+        response = [response]
+    if len(response) > 0 and response[0]["tag_name"] != VERSION:
+        print(CFVI.cli.colorize_text(f"发现新版本 {response[0]['tag_name']}: {response[0]['assets'][0]['browser_download_url']}", (255, 128, 0)))
+        print(CFVI.cli.colorize_text(response[0]["body"], (128, 128, 128)))
+except Exception as e:
+    print(CFVI.cli.colorize_text(f"获取更新失败！{str(e)}", (255, 0, 0)))
+
+print(CFVI.cli.colorize_text(f"使用/help查看可用命令", (128, 128, 128)))
 if not settings.get("base_url"):
     print(CFVI.cli.colorize_text("""警告：未设置API，默认地址很可能无法正常工作。""", (255, 128, 0)))
 
@@ -409,18 +406,12 @@ while True:
             screen.render(True)
             print()
 
-            # 处理记忆增强
             if "iptmem" in answer and isinstance(answer["iptmem"], list):
                 memory = boost_memory_importance(memory, answer["iptmem"], boost_amount=0.5)
-                # print(CFVI.cli.colorize_text(f"已增强记忆 {answer['iptmem']} 的重要性", (128, 255, 128)))
-
-            # 添加新记忆
             if answer.get("remember", "") != "":
-                # importance_boost = 0.5 if "iptmem" in answer else 0  # 如果同时有iptmem，给新记忆额外重要性
                 importance_boost = 0
                 memory = add_to_memory(memory, answer["remember"], importance_boost)
                 save_json_file(mem_path, memory)
-
             if answer.get("cmd", "") == "":
                 break
 
