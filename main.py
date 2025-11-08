@@ -19,7 +19,7 @@ import packaging.version
 # 常量定义
 NAME = "MoMo"
 CREATOR = "A439"
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 DECAY_CONSTANT = math.log(2) / (60 * 60 * 24 * 7)  # 记忆衰减常数
 
 # 路径和初始化
@@ -58,7 +58,7 @@ def clear_line():
     sys.stdout.flush()
 
 
-# 命令执行函数
+# 命令执行函数(PowerShell)
 def cmd_async(command, directory, timeout=10, callback=None):
     if not directory:
         directory = os.getcwd()
@@ -67,7 +67,8 @@ def cmd_async(command, directory, timeout=10, callback=None):
         try:
             if not os.path.exists(directory):
                 return f'错误: 目录 "{directory}" 不存在'
-            result = subprocess.run(command, shell=True, cwd=directory, capture_output=True, text=True, encoding="gbk", errors="ignore", timeout=timeout)
+            ps_command = f"powershell -Command \"& {{Set-Location '{directory}'; {command}}}\""
+            result = subprocess.run(ps_command, shell=True, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=timeout)
             output = result.stdout
             if result.stderr:
                 output += f"\n错误信息:\n{result.stderr}"
@@ -246,7 +247,7 @@ def command_character(*args):
     if not args:
         print("有这些角色喵:")
         for i, (char_name, char_desc) in enumerate(characters.items()):
-            print(f"  {i+1}. {'沫沫' if char_name == 'momo' else char_name}[{'内置' if char_name in inlay_characters else '自定义'}]")
+            print(f"  {i+1}. {char_name}[{'内置' if char_name in inlay_characters else '自定义'}]")
         print(f"现在是在和{'沫沫' if settings.get('character', 'momo') == 'momo' else settings.get('character', 'momo')}聊天喵{'(ฅ>ω<*ฅ)' if settings.get('character', 'momo') == 'momo' else ''}")
     elif len(args) == 1:
         if args[0] in characters:
@@ -438,6 +439,7 @@ try:
         print(CFVI.cli.colorize_text(f"发现新版本{response[0]['tag_name']}喵: {response[0]['assets'][0]['browser_download_url']}", (255, 128, 0)))
         print(CFVI.cli.colorize_text(response[0]["body"], (128, 128, 128)))
 except Exception as e:
+    print("\r", end="")
     print(CFVI.cli.colorize_text(f"获取更新失败喵! {str(e)}", (255, 0, 0)))
 
 print(CFVI.cli.colorize_text(f"使用/help查看可用命令喵", (128, 128, 128)))
